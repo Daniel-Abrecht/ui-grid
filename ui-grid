@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+
+import os, sys, signal, argparse, json
+
+from xdg import DesktopEntry
+
+from PyQt5.QtCore import QObject, QUrl, QAbstractListModel, Qt, QFileInfo, QSize, QThread, pyqtSignal, pyqtSlot, QTimer
+from PyQt5.QtWidgets import QApplication, QFileIconProvider
+from PyQt5.QtGui import QColor, QIcon, QWindow
+from PyQt5.QtQuick import QQuickView, QQuickImageProvider
+
+installdir = '/usr/share/ui-grid/'
+dirname = os.path.dirname(os.path.abspath(__file__))
+
+class IconImageProvider(QQuickImageProvider):
+  def __init__(self):
+    super(IconImageProvider, self).__init__(QQuickImageProvider.Image)
+
+  def requestPixmap(self, path, size):
+    wxh, path = path.split('/', 1)
+    if not size.isValid():
+      wh = wxh.split('x',1)
+      if len(wh) == 2:
+        size = QSize(int(wh[0]), int(wh[1]))
+    if not size.isValid():
+      size = QSize(256, 256)
+    if path == '':
+      path = 'image-missing'
+    if '/' in path:
+      fileInfo = QFileInfo(path)
+      iconProvider = QFileIconProvider()
+      icon = iconProvider.icon(fileInfo)
+    else:
+      icon = QIcon.fromTheme(path)
+    pixmap = icon.pixmap(size)
+    if pixmap.isNull():
+      icon = QIcon.fromTheme('image-missing')
+      pixmap = icon.pixmap(size)
+    return pixmap, pixmap.size()
+
+  def requestImage(self, path, size):
+    pixmap, size = self.requestPixmap(path, size)
+    return pixmap.toImage(), size
+
+def match_item(mask, item):
+  if mask.id:
+    return item.id == mask.id
+  return all( getattr(mask, key) == getattr(item, key) for key in ['desktop','name','source','icon'] if getattr(mask, key) )
+
+class Model(QAbstractListModel):
+  trigger_update = pyqtSignal()
+
+  def __init__(self, keys):
+    super(Model, self).__init__()
+    self.trigger_update.connect(self.c_update)
+    self.update_pending = False
+    self.roles = {}
+    index = Qt.UserRole;
+    for key in keys:
+      index += 1;
+      self.roles[index] = key
+    self.items = []
+
+  def add(self, obj):
+    self.items.append(obj)
+    self.update()
+
+  def remove(self, obj):
+    self.items = [item for item in self.items if not match_item(obj, item)]
+    self.update()
+
+  def clear(self):
+    self.items = []
+    self.update()
+
+  def update(self):
+    if not self.update_pending:
+      self.update_pending = True
+      self.trigger_update.emit() # This may have been initiated by another thread...
+
+  @pyqtSlot()
+  def c_update(self):
+    def update():
+      self.update_pending = False
+      self.layoutChanged.emit()
+    QTimer.singleShot(200, update)
+
+  def data(self, index, role):
+    key = self.roles.get(role)
+    return self.items[index.row()].get(key)
+
+  def rowCount(self, index):
+    return len(self.items)
+
+  def roleNames(self):
+    return self.roles
+
+class Item:
+  def __init__(self, obj):
+    self.id = obj.get('id')
+    self.name = obj.get('name')
+    self.icon = obj.get('icon')
+    self.source = obj.get('image')
+    self.desktop = obj.get('desktop')
+    if self.desktop:
+      xdg = DesktopEntry.DesktopEntry(obj.get('desktop'))
+      self.name = self.name or xdg.getName()
+      if not self.source:
+        self.icon = self.icon or xdg.getIcon()
+
+  def get(self, key):
+    if b'_name' == key:
+      return self.name or ""
+    if b'_icon' == key:
+      return self.icon or self.name
+    if b'_source' == key:
+      return self.source
+    if b'_id' == key:
+      if self.id:
+        return self.id
+      return json.dumps({k: v for k, v in {
+        "name": self.name,
+        "icon": self.icon,
+        "image": self.source,
+        "desktop": self.desktop
+      }.items() if v is not None}, separators=(',', ':'), indent=None)
+
+def lookup_file(filename, searchpath=[dirname,installdir]):
+  for path in searchpath:
+    fullpath = os.path.join(path, filename)
+    if os.path.exists(fullpath):
+      return fullpath
+  return None
+
+class MainWindow(QQuickView):
+  def __init__(self):
+    super(MainWindow, self).__init__()
+    self.icon_provider = IconImageProvider()
+    self.engine().addImageProvider("icon", self.icon_provider)
+    qml_file = lookup_file(os.path.join('qml','main.qml'))
+    self.setSource(QUrl.fromLocalFile(qml_file))
+
+    self.setColor(QColor("#00000000")); # Black transparent
+    self.setClearBeforeRendering(True);
+
+    self.setResizeMode(QQuickView.SizeRootObjectToView)
+    self.model = Model([b"_name",b"_source",b"_icon",b"_id"])
+    self.grid = self.findChild(QObject, 'item_view')
+    self.grid.setProperty('model', self.model)
+    self.grid_container = self.findChild(QObject, 'item_view_container')
+    self.grid.item_clicked.connect(lambda id: print(id, flush=True))
+
+  def setIconWidth(self, width):
+    self.grid_container.setProperty('iconWidth', width)
+
+  def setItemPadding(self, padding):
+    self.grid_container.setProperty('padding', padding)
+
+def auto_int(x):
+  return int(x, 0)
+
+class io_thread(QThread):
+  def __init__(self, model):
+    QThread.__init__(self)
+    self.model = model
+  def run(self):
+    for line in sys.stdin:
+      entry = None
+      line = line.strip('\n')
+      if line.strip() == '':
+        continue
+      remove = False
+      if line[0] == ':':
+        line = line[1:]
+        if line == 'clear':
+          self.model.clear()
+        continue
+      if line[0] == '-':
+        line = line[1:]
+        remove = True
+      if line[0] == '{':
+        try:
+          entry = json.loads(line)
+        except Exception as e:
+          print(e)
+      else:
+        entry = {}
+        if line.endswith('.desktop'):
+          entry['desktop'] = line
+        else:
+          entry['icon'] = line
+          entry['name'] = os.path.split(line)[-1]
+        entry['id'] = line
+      item = Item(entry)
+      if remove:
+        self.model.remove(item)
+      else:
+        self.model.add(item)
+
+if __name__ == '__main__':
+  parser = argparse.ArgumentParser(description="""
+The ui-grid application displays a grid of labeled icons.
+It is designed to be easily integratable into other applications & supports xembed.
+The things to be displayed are read from stdin, the things clicked on written to stdout.
+See the readme for mor details.
+""")
+  parser.add_argument('-e', '--xid', action="store_true", dest="pxid", help="Print out xid on first line of stdout")
+  parser.add_argument('--into', '--embed', dest="xid", type=auto_int, required=False, help="Reparent to window with specified xid")
+  parser.add_argument('--icon-width', dest="iwidth", type=auto_int, required=False, help="Width of icons")
+  parser.add_argument('--item-padding', dest="ipadding", type=auto_int, required=False, help="The minimal distance between items")
+  args = parser.parse_args()
+
+  app = QApplication(sys.argv)
+  main = MainWindow()
+  
+  if args.pxid:
+    print(hex(QWindow.winId(main).__int__()))
+
+  if args.xid:
+    win = QWindow.fromWinId(args.xid)
+    main.setParent(win)
+
+  if args.iwidth:
+    main.setIconWidth(args.iwidth)
+
+  if args.ipadding:
+    main.setItemPadding(args.ipadding)
+
+  thread = io_thread(main.model)
+  thread.start()
+
+  main.show()
+  signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+  sys.exit(app.exec_())
