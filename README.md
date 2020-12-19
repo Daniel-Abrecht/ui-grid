@@ -41,12 +41,15 @@ If it wasn't added as a json, the line to add it is printed out.
 ## Example
 
 Display the files in / and output the path of any file clicked on:
+
     find / -maxdepth 1 -not -name '.*' | ui-grid
 
 Display installed applications and launch them when clicked on:
+
     find /usr/share/applications/ -iname "*.desktop" | ui-grid | while read app; do xdg-open "$app"; done
 
 Display some other custom stuff:
+
     ui-grid <<EOF
     {"name": "Firefox", "icon": "firefox-esr"}
     {"name": "chromium"}
