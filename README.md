@@ -47,7 +47,7 @@ Display the files in / and output the path of any file clicked on:
 
 Display installed applications and launch them when clicked on:
 
-    find /usr/share/applications/ -iname "*.desktop" | ui-grid | while read app; do xdg-open "$app"; done
+    find /usr/share/applications/ -iname "*.desktop" | ui-grid | while read app; do exo-open "$app"; done
 
 Display some other custom stuff:
 
