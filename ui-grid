@@ -9,8 +9,8 @@ from PyQt5.QtWidgets import QApplication, QFileIconProvider
 from PyQt5.QtGui import QColor, QIcon, QWindow
 from PyQt5.QtQuick import QQuickView, QQuickImageProvider
 
-installdir = '/usr/share/ui-grid/'
 dirname = os.path.dirname(os.path.abspath(__file__))
+installdir = dirname
 
 class IconImageProvider(QQuickImageProvider):
   def __init__(self):
@@ -125,7 +125,7 @@ class Item:
         "desktop": self.desktop
       }.items() if v is not None}, separators=(',', ':'), indent=None)
 
-def lookup_file(filename, searchpath=[dirname,installdir]):
+def lookup_file(filename, searchpath=[installdir]):
   for path in searchpath:
     fullpath = os.path.join(path, filename)
     if os.path.exists(fullpath):
@@ -133,8 +133,9 @@ def lookup_file(filename, searchpath=[dirname,installdir]):
   return None
 
 class MainWindow(QQuickView):
-  def __init__(self):
+  def __init__(self, oneshot=False):
     super(MainWindow, self).__init__()
+    self.oneshot = oneshot
     self.icon_provider = IconImageProvider()
     self.engine().addImageProvider("icon", self.icon_provider)
     qml_file = lookup_file(os.path.join('qml','main.qml'))
@@ -148,7 +149,12 @@ class MainWindow(QQuickView):
     self.grid = self.findChild(QObject, 'item_view')
     self.grid.setProperty('model', self.model)
     self.grid_container = self.findChild(QObject, 'item_view_container')
-    self.grid.item_clicked.connect(lambda id: print(id, flush=True))
+    self.grid.item_clicked.connect(self.onclick)
+
+  def onclick(self, id):
+    print(id, flush=True)
+    if self.oneshot:
+      sys.exit(0)
 
   def setIconWidth(self, width):
     self.grid_container.setProperty('iconWidth', width)
@@ -208,11 +214,12 @@ See the readme for mor details.
   parser.add_argument('--into', '--embed', dest="xid", type=auto_int, required=False, help="Reparent to window with specified xid")
   parser.add_argument('--icon-width', dest="iwidth", type=auto_int, required=False, help="Width of icons")
   parser.add_argument('--item-padding', dest="ipadding", type=auto_int, required=False, help="The minimal distance between items")
+  parser.add_argument('--oneshot', action="store_true", help="Exit after an item has been clicked on")
   args = parser.parse_args()
 
   app = QApplication(sys.argv)
-  main = MainWindow()
-  
+  main = MainWindow(oneshot=args.oneshot)
+
   if args.pxid:
     print(hex(QWindow.winId(main).__int__()))
 

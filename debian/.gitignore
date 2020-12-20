@@ -1,0 +1,6 @@
+ui-grid*/
+tmp/
+files
+*.substvars
+*.log
+*.debhelper
