@@ -13,7 +13,9 @@ Vcs-Browser: https://projects.dpa.li/git/?p=ui-grid.git;a=summary
 
 Package: ui-grid
 Architecture: all
-Depends: python3, python3-pyqt5, python3-pyqt5.qtquick, ${misc:Depends}
+Depends: python3, python3-pyqt5, python3-pyqt5.qtquick,
+         qml-module-qtquick-controls2, qml-module-qtquick2,
+         ${misc:Depends}
 Description: Display labeled icons in a grid
  ui-grid is an xembedable program that reads the icons
  to be displayed / added / removed etc. from stdin,
